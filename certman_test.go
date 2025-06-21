@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"reflect"
 	"strings"
@@ -20,65 +20,60 @@ import (
 
 func TestValidPair(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	cm, err := certman.New("./testdata/server1.crt", "./testdata/server1.key")
+	cm, err := certman.New("./testdata/server1.crt", "./testdata/server1.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		t.Fatalf("could not watch files: %v", err)
 	}
 
-	logWant := "certificate and key loaded\n" +
-		"watching for cert and key change\n"
 	logGot := buf.String()
 
-	if logGot != logWant {
-		t.Log("log output expected:", logWant)
+	if !strings.Contains(logGot, "certificate and key loaded") {
 		t.Log("log output received:", logGot)
-		t.Fatal("log from certman not as expected")
+		t.Fatal("expected certificate loaded message not found")
+	}
+	if !strings.Contains(logGot, "watching for cert and key change") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected watching message not found")
 	}
 }
 
 func TestInvalidPair(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	cm, err := certman.New("./testdata/server1.crt", "./testdata/server2.key")
+	cm, err := certman.New("./testdata/server1.crt", "./testdata/server2.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		t.Fatalf("could not watch files: %v", err)
 	}
 
-	logWant := "can't load cert or key file: tls: private key does not match public key\n" +
-		"can't load cert or key file: tls: private key does not match public key\n" +
-		"watching for cert and key change\n"
 	logGot := buf.String()
 
-	if logGot != logWant {
-		t.Log("log output expected:", logWant)
+	if !strings.Contains(logGot, "can't load cert or key file") {
 		t.Log("log output received:", logGot)
-		t.Fatalf("test didn't in the way expected")
+		t.Fatal("expected error message not found")
+	}
+	if !strings.Contains(logGot, "watching for cert and key change") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected watching message not found")
 	}
 }
 
 func TestCertificateNotFound(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	cm, err := certman.New("./testdata/nothere.crt", "./testdata/server2.key")
+	cm, err := certman.New("./testdata/nothere.crt", "./testdata/server2.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		if !strings.HasPrefix(err.Error(), "can't watch cert file:") {
 			t.Fatalf("unexpected watch error: %v", err)
@@ -88,14 +83,11 @@ func TestCertificateNotFound(t *testing.T) {
 
 func TestKeyNotFound(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
-	cm, err := certman.New("./testdata/server1.crt", "./testdata/nothere.key")
-
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cm, err := certman.New("./testdata/server1.crt", "./testdata/nothere.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		if !strings.HasPrefix(err.Error(), "can't watch key file:") {
 			t.Fatalf("unexpected watch error: %v", err)
@@ -105,28 +97,27 @@ func TestKeyNotFound(t *testing.T) {
 
 func TestValidPairValidPair(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	copyPair("./testdata/server1.crt", "./testdata/server1.key")
 
-	cm, err := certman.New("./testdata/server.crt", "./testdata/server.key")
+	cm, err := certman.New("./testdata/server.crt", "./testdata/server.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		t.Fatalf("could not watch files: %v", err)
 	}
 
-	logWant := "certificate and key loaded\n" +
-		"watching for cert and key change\n"
 	logGot := buf.String()
 
-	if logGot != logWant {
-		t.Log("log output expected:", logWant)
+	if !strings.Contains(logGot, "certificate and key loaded") {
 		t.Log("log output received:", logGot)
-		t.Fatalf("log from certman not as expected")
+		t.Fatal("expected certificate loaded message not found")
+	}
+	if !strings.Contains(logGot, "watching for cert and key change") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected watching message not found")
 	}
 
 	buf.Reset()
@@ -134,48 +125,37 @@ func TestValidPairValidPair(t *testing.T) {
 
 	time.Sleep(2500 * time.Millisecond)
 
-	logWant = "certificate and key loaded"
-	logMessages := strings.Split(buf.String(), "\n")
+	logGot = buf.String()
 
-	found := false
-	for _, m := range logMessages {
-		if m == logWant {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Log("log output expected:", logWant)
-		t.Log("log output received:", buf.String())
-		t.Fatalf("log from certman not as expected")
+	if !strings.Contains(logGot, "certificate and key loaded") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected certificate reloaded message not found")
 	}
 }
 
 func TestValidPairInvalidPair(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	copyPair("./testdata/server1.crt", "./testdata/server1.key")
 
-	cm, err := certman.New("./testdata/server.crt", "./testdata/server.key")
+	cm, err := certman.New("./testdata/server.crt", "./testdata/server.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		t.Fatalf("could not watch files: %v", err)
 	}
 
-	logWant := "certificate and key loaded\n" +
-		"watching for cert and key change\n"
 	logGot := buf.String()
 
-	if logGot != logWant {
-		t.Log("log output expected:", logWant)
+	if !strings.Contains(logGot, "certificate and key loaded") {
 		t.Log("log output received:", logGot)
-		t.Fatalf("log from certman not as expected")
+		t.Fatal("expected certificate loaded message not found")
+	}
+	if !strings.Contains(logGot, "watching for cert and key change") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected watching message not found")
 	}
 
 	buf.Reset()
@@ -184,49 +164,37 @@ func TestValidPairInvalidPair(t *testing.T) {
 
 	time.Sleep(2500 * time.Millisecond)
 
-	logWant = "can't load cert or key file: tls: private key does not match public key"
+	logGot = buf.String()
 
-	logMessages := strings.Split(buf.String(), "\n")
-
-	found := false
-	for _, m := range logMessages {
-		if m == logWant {
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		t.Log("log output expected:", logWant)
-		t.Log("log output received:", buf.String())
-		t.Fatalf("log from certman not as expected")
+	if !strings.Contains(logGot, "can't load cert or key file") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected error message not found")
 	}
 }
 
 func TestStop(t *testing.T) {
 	buf := new(bytes.Buffer)
-	l := log.New(buf, "", 0)
+	l := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	copyPair("./testdata/server1.crt", "./testdata/server1.key")
 
-	cm, err := certman.New("./testdata/server.crt", "./testdata/server.key")
+	cm, err := certman.New("./testdata/server.crt", "./testdata/server.key", certman.WithLogger(l))
 	if err != nil {
 		t.Fatalf("could not create certman: %v", err)
 	}
-
-	cm.Logger(l)
 	if err := cm.Watch(); err != nil {
 		t.Fatalf("could not watch files: %v", err)
 	}
 
-	logWant := "certificate and key loaded\n" +
-		"watching for cert and key change\n"
 	logGot := buf.String()
 
-	if logGot != logWant {
-		t.Log("log output expected:", logWant)
+	if !strings.Contains(logGot, "certificate and key loaded") {
 		t.Log("log output received:", logGot)
-		t.Fatalf("log from certman not as expected")
+		t.Fatal("expected certificate loaded message not found")
+	}
+	if !strings.Contains(logGot, "watching for cert and key change") {
+		t.Log("log output received:", logGot)
+		t.Fatal("expected watching message not found")
 	}
 
 	buf.Reset()
@@ -235,13 +203,11 @@ func TestStop(t *testing.T) {
 	copyPair("./testdata/server2.crt", "./testdata/server2.key")
 	time.Sleep(200 * time.Millisecond)
 
-	logWant = "stopped watching\n"
 	logGot = buf.String()
 
-	if !strings.Contains(logGot, logWant) {
-		t.Log("log output expected:", logWant)
+	if !strings.Contains(logGot, "stopped watching") {
 		t.Log("log output received:", logGot)
-		t.Fatalf("log from certman not as expected")
+		t.Fatal("expected stopped watching message not found")
 	}
 }
 
@@ -270,7 +236,6 @@ func TestGetCertificate(t *testing.T) {
 	if !reflect.DeepEqual(cmCert.Certificate, expectedCert.Certificate) {
 		t.Fatalf("certman certificate doesn't match expected certificate")
 	}
-
 }
 
 func copyPair(crt, key string) {

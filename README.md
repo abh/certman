@@ -39,41 +39,41 @@ Basic server passing in a logger to log certman events:
 package main
 
 import (
-	"crypto/tls"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
+        "crypto/tls"
+        "fmt"
+        "log"
+        "net/http"
+        "os"
 
-	"github.com/dyson/certman"
+        "github.com/dyson/certman"
 )
 
 func main() {
-	logger := log.New(os.Stdout, "", log.LstdFlags)
+        logger := log.New(os.Stdout, "", log.LstdFlags)
 
-	cm, err := certman.New("/tmp/server.crt", "/tmp/server.key")
-	if err != nil {
-		logger.Println(err)
-	}
-	cm.Logger(logger)
-	if err := cm.Watch(); err != nil {
-		logger.Println(err)
-	}
+        cm, err := certman.New("/tmp/server.crt", "/tmp/server.key")
+        if err != nil {
+                logger.Println(err)
+        }
+        cm.Logger(logger)
+        if err := cm.Watch(); err != nil {
+                logger.Println(err)
+        }
 
-	http.HandleFunc("/", handler)
-	s := &http.Server{
-		Addr: ":8080",
-		TLSConfig: &tls.Config{
-			GetCertificate: cm.GetCertificate,
-		},
-	}
-	if err := s.ListenAndServeTLS("", ""); err != nil {
-		logger.Println(err)
-	}
+        http.HandleFunc("/", handler)
+        s := &http.Server{
+                Addr: ":8080",
+                TLSConfig: &tls.Config{
+                        GetCertificate: cm.GetCertificate,
+                },
+        }
+        if err := s.ListenAndServeTLS("", ""); err != nil {
+                logger.Println(err)
+        }
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello")
+        fmt.Fprintf(w, "Hello")
 }
 ```
 Visit https://localhost:8080.

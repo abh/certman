@@ -11,8 +11,11 @@
 package certman
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -31,23 +34,39 @@ type CertMan struct {
 	keyFile  string
 	keyPair  *tls.Certificate
 	watcher  *fsnotify.Watcher
-	watching chan bool
-	log      logger
+	ctx      context.Context
+	cancel   context.CancelFunc
+	log      *slog.Logger
 }
 
-// logger is an interface that wraps the basic Printf method.
-type logger interface {
-	Printf(string, ...interface{})
+// setupLogs creates a default logger for certman.
+func setupLogs() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 }
 
-type nopLogger struct{}
+// Option is a functional option for configuring CertMan.
+type Option func(*CertMan)
 
-func (l *nopLogger) Printf(format string, v ...interface{}) {}
+// WithLogger sets the logger for CertMan.
+func WithLogger(logger *slog.Logger) Option {
+	return func(cm *CertMan) {
+		cm.log = logger
+	}
+}
+
+// WithContext sets the context for CertMan.
+func WithContext(ctx context.Context) Option {
+	return func(cm *CertMan) {
+		cm.ctx, cm.cancel = context.WithCancel(ctx)
+	}
+}
 
 // New creates a new certMan. The certFile and the keyFile
 // are both paths to the location of the files. Relative and
 // absolute paths are accepted.
-func New(certFile, keyFile string) (*CertMan, error) {
+func New(certFile, keyFile string, opts ...Option) (*CertMan, error) {
 	var err error
 
 	certFile, err = filepath.Abs(certFile)
@@ -60,20 +79,22 @@ func New(certFile, keyFile string) (*CertMan, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	cm := &CertMan{
 		mu:       sync.RWMutex{},
 		certFile: certFile,
 		keyFile:  keyFile,
-		log:      &nopLogger{},
+		ctx:      ctx,
+		cancel:   cancel,
+		log:      setupLogs(),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(cm)
 	}
 
 	return cm, nil
-}
-
-// Logger sets the logger for certMan to use. It accepts
-// a logger interface.
-func (cm *CertMan) Logger(logger logger) {
-	cm.log = logger
 }
 
 // Watch starts watching for changes to the certificate
@@ -101,12 +122,10 @@ func (cm *CertMan) Watch() error {
 	}
 
 	if err := cm.load(); err != nil {
-		cm.log.Printf("can't load cert or key file: %v", err)
+		cm.log.ErrorContext(cm.ctx, "can't load cert or key file", "error", err)
 	}
 
-	cm.log.Printf("watching for cert and key change")
-
-	cm.watching = make(chan bool)
+	cm.log.InfoContext(cm.ctx, "watching for cert and key change")
 
 	go cm.run()
 
@@ -119,17 +138,17 @@ func (cm *CertMan) load() error {
 		cm.mu.Lock()
 		defer cm.mu.Unlock()
 		cm.keyPair = &keyPair
-		cm.log.Printf("certificate and key loaded")
+		cm.log.InfoContext(cm.ctx, "certificate and key loaded")
 		return nil
 	}
 
-	cm.log.Printf("can't load cert or key file: %s", err)
+	cm.log.ErrorContext(cm.ctx, "can't load cert or key file", "error", err)
 
 	return err
 }
 
 func (cm *CertMan) run() {
-	cm.log.Printf("running")
+	cm.log.DebugContext(cm.ctx, "running")
 
 	ticker := time.NewTicker(1 * time.Second)
 	files := []string{cm.certFile, cm.keyFile}
@@ -138,15 +157,15 @@ func (cm *CertMan) run() {
 loop:
 	for {
 		select {
-		case <-cm.watching:
-			cm.log.Printf("watching triggered; break loop")
+		case <-cm.ctx.Done():
+			cm.log.DebugContext(cm.ctx, "context cancelled; break loop")
 			break loop
 		case <-ticker.C:
 			if !reload.IsZero() && time.Now().After(reload) {
 				reload = time.Time{}
-				cm.log.Printf("reloading")
+				cm.log.DebugContext(cm.ctx, "reloading")
 				if err := cm.load(); err != nil {
-					cm.log.Printf("can't load cert or key file: %v", err)
+					cm.log.ErrorContext(cm.ctx, "can't load cert or key file", "error", err)
 				}
 			}
 		case event := <-cm.watcher.Events:
@@ -156,18 +175,18 @@ loop:
 				if event.Name == f ||
 					strings.HasSuffix(event.Name, "/..data") { // kubernetes secrets mount
 					if reload.IsZero() {
-						cm.log.Printf("%s was modified (%s), queue reload", f, event.Op.String())
+						cm.log.InfoContext(cm.ctx, "file was modified, queue reload", "file", f, "operation", event.Op.String())
 					}
 					// we wait a couple seconds in case the cert and key don't update atomically
 					reload = time.Now().Add(1 * time.Second)
 				}
 			}
 		case err := <-cm.watcher.Errors:
-			cm.log.Printf("error watching files: %v", err)
+			cm.log.ErrorContext(cm.ctx, "error watching files", "error", err)
 		}
 	}
 
-	cm.log.Printf("stopped watching")
+	cm.log.InfoContext(cm.ctx, "stopped watching")
 
 	cm.watcher.Close()
 	ticker.Stop()
@@ -193,5 +212,5 @@ func (cm *CertMan) GetClientCertificate(hello *tls.CertificateRequestInfo) (*tls
 // Stop tells certMan to stop watching for changes to the
 // certificate and key files.
 func (cm *CertMan) Stop() {
-	cm.watching <- false
+	cm.cancel()
 }
